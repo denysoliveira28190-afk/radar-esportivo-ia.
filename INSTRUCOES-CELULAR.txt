@@ -1,0 +1,5 @@
+1. No GitHub abra app.py, toque no lapis e substitua o conteudo pelo novo app.py. Confirme o commit.
+2. Crie requirements.txt na raiz com as duas linhas fornecidas. O arquivo requisitos.txt pode permanecer.
+3. Mantenha FOOTBALL_DATA_TOKEN somente no Streamlit Secrets. Nunca publique a chave.
+4. Aguarde o redeploy e clique em Buscar partidas.
+5. HTTP 200 com zero jogos indica resposta vazia do provedor; HTTP 403 indica falta de permissao.

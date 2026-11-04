@@ -1,5 +1,6 @@
 import os, math, sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import requests
 import streamlit as st
 
@@ -27,25 +28,75 @@ def estimate(home_for,home_against,away_for,away_against):
     over=sum(ph[i]*pa[j] for i in range(13) for j in range(13) if i+j>=3)/total
     return h,d,a,over,lh,la
 
-def get_matches(day,competition,token):
-    headers={'X-Auth-Token':token}
-    response=requests.get('https://api.football-data.org/v4/matches',headers=headers,params={'dateFrom':day.isoformat(),'dateTo':day.isoformat(),'competitions':competition},timeout=18)
-    if response.status_code==403:
-        raise ValueError('Esta competição ou temporada não está liberada no seu plano da API.')
-    if response.status_code==429:
-        raise ValueError('Limite de requisições atingido. Tente novamente mais tarde.')
-    response.raise_for_status()
-    return response.json().get('matches',[])
+def api_get(path, token, params=None):
+    try:
+        response = requests.get(
+            'https://api.football-data.org/v4/' + path,
+            headers={'X-Auth-Token': token.strip()},
+            params=params, timeout=25)
+    except requests.RequestException as exc:
+        raise ValueError('Falha de conexão com o provedor. Tente novamente.') from exc
+    status = response.status_code
+    if status == 401:
+        raise ValueError('HTTP 401: chave inválida ou não reconhecida.')
+    if status == 403:
+        raise ValueError('HTTP 403: competição ou temporada sem acesso neste plano.')
+    if status == 404:
+        raise ValueError('HTTP 404: competição não encontrada no provedor.')
+    if status == 429:
+        raise ValueError('HTTP 429: limite de requisições atingido. Aguarde.')
+    if status >= 400:
+        raise ValueError(f'HTTP {status}: o provedor recusou a consulta.')
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise ValueError('O provedor devolveu uma resposta que não é JSON.') from exc
+
+
+def get_matches(day, competition, token):
+    # A API usa datas UTC; buscar uma margem e filtrar no horário de Brasília.
+    start = (day - timedelta(days=1)).isoformat()
+    end = (day + timedelta(days=1)).isoformat()
+    payload = api_get(f'competitions/{competition}/matches', token,
+                      {'dateFrom': start, 'dateTo': end})
+    games = payload.get('matches', [])
+    if not isinstance(games, list):
+        raise ValueError('Resposta inesperada da API: campo matches ausente.')
+    selected = []
+    for game in games:
+        raw = game.get('utcDate')
+        if not raw:
+            continue
+        try:
+            utc = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+            local = utc.astimezone(ZoneInfo('America/Sao_Paulo'))
+        except (ValueError, TypeError):
+            continue
+        if local.date() == day:
+            selected.append((local, game))
+    return sorted(selected, key=lambda item: item[0]), len(games)
+
+
+def load_token():
+    # O segredo salvo no Streamlit Cloud tem prioridade; nunca o exibir.
+    try:
+        return str(st.secrets.get('FOOTBALL_DATA_TOKEN', '')).strip()
+    except Exception:
+        return os.getenv('FOOTBALL_DATA_TOKEN', '').strip()
 
 init_db()
 st.title('⚽ Radar Esportivo IA')
 st.caption('MVP local • Dados reais quando conectados à API • Probabilidades ilustrativas calculadas apenas com médias informadas')
 with st.sidebar:
     st.header('Configurações')
-    token=st.text_input('Token football-data.org',value=os.getenv('FOOTBALL_DATA_TOKEN',''),type='password')
+    token=load_token()
+    if token:
+        st.success('Chave configurada no servidor.')
+    else:
+        st.warning('Configure FOOTBALL_DATA_TOKEN em Secrets do Streamlit.')
     st.caption('Gratuito sujeito a limites de competições e requisições. Nunca compartilhe seu token.')
     league=st.selectbox('Campeonato',list(COMPETITIONS))
-    day=st.date_input('Data',value=date.today())
+    day=st.date_input('Data',value=datetime.now(ZoneInfo('America/Sao_Paulo')).date())
     st.info('Libertadores e algumas ligas podem não estar disponíveis no plano gratuito. A aplicação mostrará a restrição.')
 
 t1,t2,t3=st.tabs(['📅 Jogos automáticos','✍️ Análise manual','📚 Histórico'])
@@ -56,12 +107,18 @@ with t1:
             st.warning('Insira seu token da API na barra lateral para consultar jogos reais.')
         else:
             try:
-                games=get_matches(day,COMPETITIONS[league],token)
-                if not games: st.info('Nenhuma partida retornada nesta data/competição.')
-                for g in games:
-                    h=g.get('homeTeam',{}).get('name','Mandante')
-                    a=g.get('awayTeam',{}).get('name','Visitante')
-                    st.write(f"**{h} × {a}** — {g.get('utcDate','')} UTC — {g.get('status','')}")
+                games, raw_count = get_matches(day, COMPETITIONS[league], token)
+                st.caption(f'Consulta concluída • HTTP 200 • {raw_count} registros na janela UTC • {len(games)} partidas na data de Brasília')
+                if not games:
+                    st.info('Nenhuma partida encontrada nesta data para esta competição no provedor. Isso não significa que não existam jogos em outras fontes.')
+                for local, g in games:
+                    h = (g.get('homeTeam') or {}).get('name') or 'Mandante a definir'
+                    a = (g.get('awayTeam') or {}).get('name') or 'Visitante a definir'
+                    score = (g.get('score') or {}).get('fullTime') or {}
+                    result = ''
+                    if score.get('home') is not None and score.get('away') is not None:
+                        result = f" • {score['home']} x {score['away']}"
+                    st.write(f"**{h} × {a}** • {local:%d/%m/%Y %H:%M} (Brasília) • {g.get('status','')}{result}")
                 st.caption('Esta consulta lista jogos; não cria previsões sem estatísticas históricas suficientes.')
             except (requests.RequestException,ValueError) as e:
                 st.error(f'Não foi possível consultar: {e}')
