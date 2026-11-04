@@ -1,0 +1,16 @@
+RADAR ESPORTIVO IA - MVP 0.1
+
+1. Instale Python 3.10+ se necessario.
+2. Extraia a pasta inteira do ZIP.
+3. No Windows, clique duas vezes em iniciar.bat.
+4. O navegador abrira o painel local Streamlit.
+5. Para jogos reais, crie uma conta em https://www.football-data.org/ e cole o token no painel lateral.
+6. Sem token, use a aba Analise manual, inserindo medias de fontes verificadas.
+
+IMPORTANTE:
+- O modulo automatico consulta a agenda real, mas nao calcula probabilidades sem historico suficiente.
+- O calculo manual usa Poisson simplificado e NAO e IA generativa treinada.
+- Cobertura de ligas, inclusive Libertadores, depende da assinatura e dos direitos do fornecedor.
+- Escanteios, cartoes, coleta historica automatica, calibracao e modelo de IA ficam para proximas versoes.
+- O banco radar.db e criado localmente e preserva analises salvas.
+- Nao coloque tokens em arquivos compartilhados.
